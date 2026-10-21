@@ -80,10 +80,16 @@ class VoiceActivityDetector:
         return max(MIN_THRESHOLD, floor * self.noise_factor)
 
     def calibrate(self, levels: list[float]) -> None:
-        """Seed the noise floor with a sample of background noise."""
+        """Seed the noise floor with a sample of background noise.
+
+        A low percentile rather than the median, because the sample can
+        catch someone already talking: the quietest part of the window is
+        closer to the room than the average is.
+        """
         if self.threshold is not None or not levels:
             return
-        self._noise_levels = list(levels[-NOISE_WINDOW:])
+        ordered = sorted(levels[-NOISE_WINDOW:])
+        self._noise_levels = [ordered[len(ordered) // 10]] * len(ordered)
 
     def _remember_noise(self, level: float) -> None:
         self._noise_levels.append(level)
@@ -137,6 +143,7 @@ class Recorder:
     def __init__(self, config: VoiceConfig) -> None:
         self.config = config
         self._reader: _WavReader | None = None
+        self._exhausted = False
 
     @property
     def is_file_source(self) -> bool:
@@ -196,6 +203,8 @@ class Recorder:
 
         Returns ``None`` if the microphone is unavailable or nothing was said.
         """
+        if self.is_file_source and self._exhausted:
+            raise EndOfSource(f"{self.config.mic_source} has no more audio")
         if not shutil.which("pw-cat") and not shutil.which("parec"):
             raise RuntimeError("neither pw-cat nor parec is installed (PipeWire)")
 
@@ -216,6 +225,7 @@ class Recorder:
         high_pass = HighPass(SAMPLE_RATE, self.config.high_pass_hz)
 
         history: list[bytes] = []
+        pending: list[tuple[bytes, float]] = []
         captured: list[bytes] = []
         started = False
         frames_read = 0
@@ -230,7 +240,11 @@ class Recorder:
             parts = []
             remaining = FRAME_BYTES
             while remaining > 0:
-                chunk = stream.read(remaining)
+                try:
+                    chunk = stream.read(remaining)
+                except EndOfSource:
+                    self._exhausted = True
+                    return None
                 if not chunk:
                     break
                 parts.append(chunk)
@@ -242,25 +256,51 @@ class Recorder:
 
         try:
             # 1. let the stream settle, then listen to the room so the
-            #    threshold fits it
+            #    threshold fits it. Keep the frames: a clip can start with
+            #    someone already talking, and that first word counts.
             for _ in range(warmup_frames):
-                if read_frame() is None:
-                    return None
+                frame = read_frame()
+                if frame is None:
+                    return self._end_of_input()
+                frame = high_pass.process(frame)
+                pending.append((frame, level_of(frame)))
             for _ in range(calibration_frames):
                 frame = read_frame()
                 if frame is None:
-                    return None
+                    return self._end_of_input()
                 frame = high_pass.process(frame)
-                calibration.append(level_of(frame))
-                history.append(frame)
+                level = level_of(frame)
+                calibration.append(level)
+                pending.append((frame, level))
 
             detector.calibrate(calibration)
+            history = [frame for frame, _ in pending[-pre_roll_frames:]]
+
+            # Speech may have started before calibration finished; replay
+            # the buffered frames so the beginning is not lost.
+            finished = False
+            for index, (frame, level) in enumerate(pending):
+                event = detector.feed(level)
+                if event == "start" and not started:
+                    started = True
+                    threshold = detector.effective_threshold
+                    begin = 0
+                    for position in range(index, -1, -1):
+                        if pending[position][1] <= threshold:
+                            begin = position + 1
+                            break
+                    begin = max(0, begin - 2)  # a little lead-in
+                    captured = [f for f, _ in pending[begin:]]
+                    history = captured[-pre_roll_frames:]
+                elif event == "end":
+                    finished = True
+                    break
 
             # 2. wait for speech, keeping a little of the run up
-            while not started:
+            while not started and not finished:
                 frame = read_frame()
                 if frame is None:
-                    return None
+                    return self._end_of_input()
                 frame = high_pass.process(frame)
                 history.append(frame)
                 if len(history) > pre_roll_frames:
@@ -269,8 +309,8 @@ class Recorder:
                     captured = list(history)
                     started = True
 
-            # 3. capture until the speaker stops
-            while True:
+            # 3. capture until the speaker stops, or the clip runs out
+            while not finished:
                 frame = read_frame()
                 if frame is None:
                     break
@@ -288,6 +328,16 @@ class Recorder:
 
         if started and captured:
             return self._utterance(captured)
+        return self._end_of_input()
+
+    def _end_of_input(self) -> None:
+        """There is nothing more to read.
+
+        A device that stops producing audio is restarted on the next call,
+        but a file that runs out has no more speech in it, so the loop ends.
+        """
+        if self._exhausted:
+            raise EndOfSource(f"{self.config.mic_source} has no more audio")
         return None
 
     def _utterance(self, frames: list[bytes]) -> Utterance:

@@ -325,6 +325,23 @@ class FileSourceTests(unittest.TestCase):
             self.assertGreater(utterance.duration_s, 2.5)
             self.assertLess(utterance.duration_s, 3.5)
 
+    def test_a_clip_that_ends_mid_sentence_still_counts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audio.wav"
+            quiet = array("h", [0] * 24000).tobytes()
+            with wave.open(str(path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(16000)
+                handle.writeframes(quiet + tone(16000, 0.5))
+
+            recorder = Recorder(self._config(path))
+            utterance = recorder.record()
+            self.assertIsNotNone(utterance)
+            self.assertGreater(utterance.duration_s, 1.0)
+            with self.assertRaises(EndOfSource):
+                recorder.record()
+
     def test_the_file_is_not_replayed(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "audio.wav"

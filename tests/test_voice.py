@@ -220,6 +220,13 @@ class DetectorTests(unittest.TestCase):
         detector.calibrate([0.05] * 30)
         self.assertGreater(detector.effective_threshold, quiet)
 
+    def test_calibrating_on_speech_does_not_deafen_the_detector(self):
+        # someone was already talking during the calibration window
+        detector = VoiceActivityDetector(onset_ms=40)
+        detector.calibrate([0.2] * 40)
+        self.assertLess(detector.effective_threshold, 0.2)
+        self.assertEqual(self._feed_until(detector, 0.2, "start"), "start")
+
 
 class TranscriptCleaningTests(unittest.TestCase):
     def test_removes_blank_audio_markers(self):
@@ -324,6 +331,20 @@ class FileSourceTests(unittest.TestCase):
             # the phrase is 2s; add the 400ms pre-roll and 700ms of silence
             self.assertGreater(utterance.duration_s, 2.5)
             self.assertLess(utterance.duration_s, 3.5)
+
+    def test_speech_from_the_first_frame_is_heard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audio.wav"
+            with wave.open(str(path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(16000)
+                handle.writeframes(tone(32000, 0.5))
+
+            recorder = Recorder(self._config(path))
+            utterance = recorder.record()
+            self.assertIsNotNone(utterance)
+            self.assertGreater(utterance.duration_s, 1.8)
 
     def test_a_clip_that_ends_mid_sentence_still_counts(self):
         with tempfile.TemporaryDirectory() as folder:

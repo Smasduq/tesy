@@ -17,6 +17,7 @@ WARMUP_MS = 300
 CALIBRATION_MS = 400
 PRE_ROLL_MS = 400
 MIN_THRESHOLD = 0.004
+MAX_CALIBRATION_FLOOR = 0.02
 NOISE_FACTOR = 3.0
 NOISE_WINDOW = 50  # frames, about one second
 NOISE_MIN_SAMPLES = 10
@@ -89,7 +90,8 @@ class VoiceActivityDetector:
         if self.threshold is not None or not levels:
             return
         ordered = sorted(levels[-NOISE_WINDOW:])
-        self._noise_levels = [ordered[len(ordered) // 10]] * len(ordered)
+        floor = min(ordered[len(ordered) // 10], MAX_CALIBRATION_FLOOR)
+        self._noise_levels = [floor] * len(ordered)
 
     def _remember_noise(self, level: float) -> None:
         self._noise_levels.append(level)

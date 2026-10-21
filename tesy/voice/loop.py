@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
+from pathlib import Path
 from queue import Queue
 from typing import Iterator
 
 from ..chat import Conversation
+from ..config import env_get
+from .audio import clipped_fraction
 from .config import VoiceConfig
 from .recorder import EndOfSource, Recorder
 from .sentences import SentenceBuffer
@@ -132,6 +136,10 @@ class VoiceLoop:
             if utterance is None:
                 continue
 
+            debug_directory = env_get("TESY_DEBUG_AUDIO")
+            if debug_directory:
+                self._save_utterance(utterance, debug_directory)
+
             try:
                 heard = self.transcriber.transcribe(utterance)
             except Exception as error:
@@ -158,3 +166,19 @@ class VoiceLoop:
                         sys.stdout.flush()
                 sys.stdout.write("\n")
                 sys.stdout.flush()
+
+    def _save_utterance(self, utterance, directory: str) -> None:
+        """Keep the captured audio so it can be inspected later."""
+        folder = Path(directory).expanduser()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            path = folder / f"utterance-{stamp}.wav"
+            path.write_bytes(utterance.to_wav())
+        except OSError as error:
+            print(f"could not save audio: {error}", file=sys.stderr)
+            return
+
+        clipped = clipped_fraction(utterance.samples)
+        note = f", {clipped:.0%} clipped" if clipped > 0 else ""
+        print(f"  saved {path} ({utterance.duration_s:.1f}s{note})")

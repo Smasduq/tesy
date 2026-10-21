@@ -14,7 +14,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tesy.voice import audio, sentences  # noqa: E402
-from tesy.voice.config import VoiceConfig, resolve_voice_config  # noqa: E402
+from tesy.voice.config import (  # noqa: E402
+    VoiceConfig,
+    _best_mic_profile,
+    resolve_voice_config,
+)
 from tesy.voice.recorder import (  # noqa: E402
     EndOfSource,
     Recorder,
@@ -56,7 +60,6 @@ def env(values: dict[str, str]):
 class LevelTests(unittest.TestCase):
     def test_silence_is_zero(self):
         self.assertEqual(audio.level_of(b"\x00\x00" * 320), 0.0)
-
     def test_empty_is_zero(self):
         self.assertEqual(audio.level_of(b""), 0.0)
 
@@ -74,6 +77,19 @@ class LevelTests(unittest.TestCase):
         # two bytes make one sample, the stray third byte is ignored
         expected = abs(struct.unpack("<h", b"\x01\x02")[0]) / 32768
         self.assertAlmostEqual(audio.level_of(b"\x01\x02\x03"), expected, places=5)
+
+
+class ClippingTests(unittest.TestCase):
+    def test_clean_audio_is_not_clipped(self):
+        self.assertEqual(audio.clipped_fraction(tone(320, 0.5)), 0.0)
+
+    def test_full_scale_audio_is_clipped(self):
+        samples = struct.pack("<320h", *([32767] * 320))
+        self.assertEqual(audio.clipped_fraction(samples), 1.0)
+
+    def test_estimates_the_share_of_clipped_samples(self):
+        samples = struct.pack("<10h", *([0, 0, 0, 0, 0, 0, 0, 0, 32767, 32767]))
+        self.assertAlmostEqual(audio.clipped_fraction(samples), 0.2)
 
 
 class HighPassTests(unittest.TestCase):
@@ -408,11 +424,21 @@ class SpeakerTests(unittest.TestCase):
 
 
 class VoiceConfigTests(unittest.TestCase):
+    def test_wideband_headset_profile_comes_first(self):
+        profiles = ["headset-head-unit-cvsd", "headset-head-unit"]
+        self.assertEqual(
+            _best_mic_profile(profiles),
+            ["headset-head-unit", "headset-head-unit-cvsd"],
+        )
+
+    def test_other_profiles_keep_their_order(self):
+        self.assertEqual(_best_mic_profile([]), [])
+
     def test_defaults(self):
         with env({"TESY_VOICE_DIR": "/tmp/tesy-test", "TESY_TTS_MODEL": "", "TESY_STT_MODEL": ""}):
             config = resolve_voice_config()
         self.assertEqual(str(config.tts_model), "/tmp/tesy-test/voices/en_US-amy-medium.onnx")
-        self.assertEqual(str(config.stt_model), "/tmp/tesy-test/models/ggml-tiny.en.bin")
+        self.assertEqual(str(config.stt_model), "/tmp/tesy-test/models/ggml-base.en.bin")
 
     def test_environment_overrides(self):
         with env(

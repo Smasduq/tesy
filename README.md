@@ -103,8 +103,9 @@ The installer is a one-time download of about 150 MB and needs no root. It
 puts everything under `~/.local/share/tesy/`:
 
 - **Transcription** - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
-  with `ggml-tiny.en.bin` (fast, accurate enough on quiet audio). Set
-  `TESY_STT_MODEL` to the `ggml-base.en.bin` path if the room is noisy.
+  with `ggml-base.en.bin`, which holds up much better on a real microphone
+  than the tiny model. Set `TESY_STT_MODEL` to the `ggml-tiny.en.bin` path if
+  you would rather have the lower latency.
 - **Speech** - [piper](https://github.com/rhasspy/piper) with the
   `en_US-amy-medium` voice, run by a persistent worker so the model loads once
   instead of on every sentence.
@@ -117,7 +118,7 @@ puts everything under `~/.local/share/tesy/`:
 | `TESY_MIC_SOURCE`       | first input device               | PipeWire source name, or `file:clip.wav`     |
 | `TESY_SPEAKER`          | first output device              | PipeWire sink name                           |
 | `TESY_VOICE_DIR`        | `~/.local/share/tesy`            | Where the installer put everything           |
-| `TESY_STT_MODEL`        | `.../models/ggml-tiny.en.bin`    | Whisper model                                |
+| `TESY_STT_MODEL`        | `.../models/ggml-base.en.bin`    | Whisper model                                |
 | `TESY_TTS_MODEL`        | `.../voices/en_US-amy-medium.onnx` | Piper voice                                |
 | `TESY_STT_LANGUAGE`     | `en`                             | Whisper language                             |
 | `TESY_HIGH_PASS_HZ`     | `100`                            | Cuts laptop rumble before speech detection   |
@@ -127,6 +128,7 @@ puts everything under `~/.local/share/tesy/`:
 | `TESY_MAX_UTTERANCE_S`  | `20`                             | Safety cap on a single turn                  |
 | `TESY_VAD_THRESHOLD`    | adaptive                         | Fixed level instead of noise tracking        |
 | `TESY_STT_THREADS`      | `4`                              | Whisper threads                              |
+| `TESY_DEBUG_AUDIO`      | off                              | Directory to save each captured turn as WAV  |
 
 The microphone is only listened to while the voice is silent, so the half-duplex
 loop never transcribes Tesy's own speech.
@@ -134,14 +136,33 @@ loop never transcribes Tesy's own speech.
 ### Bluetooth headsets
 
 A headset on the A2DP music profile has no usable microphone. Tesy asks
-PipeWire to switch the card to a headset profile on start, which makes the
-output narrowband while `--talk` is running. Unset `TESY_MIC_SOURCE` to let it
-pick the default device, or point it at the laptop microphone and keep music
-quality:
+PipeWire to switch the card to a headset profile on start. It asks for mSBC
+(16 kHz) first, because the older CVSD codec is only 8 kHz and makes
+transcription noticeably worse. Output is narrowband while `--talk` is
+running. Unset `TESY_MIC_SOURCE` to let it pick the default device, or point
+it at the laptop microphone and keep music quality:
 
 ```bash
 TESY_MIC_SOURCE=alsa_input.pci-0000_00_1f.3.analog-stereo python main.py --talk
 ```
+
+If a headset only offers CVSD, Tesy still uses it rather than giving up, but
+that is the 8 kHz path and words will be missed more often. Pointing
+`TESY_MIC_SOURCE` at the laptop microphone is usually more accurate there.
+
+### When transcription is wrong
+
+Set a debug directory and each turn is saved as a WAV with its level and
+clipping shown:
+
+```bash
+TESY_DEBUG_AUDIO=~/tesy-audio python main.py --talk
+```
+
+That file is exactly what whisper was given, so it separates a microphone
+problem (quiet, clipped, distorted) from a model problem. The usual causes,
+in order: the wrong microphone, a headset on CVSD, speaking before the
+stream settles, and the tiny model on a noisy room.
 
 ### Trying it without a microphone
 

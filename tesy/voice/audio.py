@@ -65,6 +65,22 @@ def level_of(samples: bytes) -> float:
     return math.sqrt(total / len(values)) / MAX_AMPLITUDE
 
 
+def clipped_fraction(samples: bytes) -> float:
+    """How much of a frame is pinned at full scale, 0.0 to 1.0.
+
+    A microphone whose gain is too high flattens the loudest parts of speech.
+    Whisper cannot recover what was clipped, so this is worth surfacing.
+    """
+    if not samples:
+        return 0.0
+    values = array("h")
+    values.frombytes(samples[: len(samples) - (len(samples) % SAMPLE_WIDTH)])
+    if not values:
+        return 0.0
+    clipped = sum(1 for value in values if value <= -32767 or value >= 32767)
+    return clipped / len(values)
+
+
 def to_wav(samples: bytes, sample_rate: int) -> bytes:
     """Wrap raw signed 16 bit PCM in a WAV container."""
     buffer = io.BytesIO()

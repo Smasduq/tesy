@@ -12,7 +12,7 @@ from ..config import env_get
 
 DEFAULT_VOICE_DIR = Path.home() / ".local" / "share" / "tesy"
 DEFAULT_VOICE_MODEL = "en_US-amy-medium"
-DEFAULT_STT_MODEL = "ggml-tiny.en.bin"
+DEFAULT_STT_MODEL = "ggml-base.en.bin"
 SAMPLE_RATE = 16000
 FRAME_MS = 20
 
@@ -111,10 +111,23 @@ def _pactl(kind: str) -> list[str]:
 
 
 def default_mic_source() -> str | None:
-    """The source PipeWire would use by default."""
+    """The source to listen on when none was asked for."""
     sources = [name for name in list_sources() if ".monitor" not in name]
+    cards = {card["name"]: card for card in _cards()}
+
     for source in sources:
-        if source.startswith("bluez_input"):
+        if not source.startswith("bluez_input"):
+            continue
+        card = cards.get(_card_for_source(source) or "")
+        active = (card or {}).get("active") or ""
+        # A Bluetooth source can exist while the card is on a music-only
+        # profile, and then it carries nothing. Only trust it when the
+        # card really has its microphone switched on.
+        if active.startswith("headset"):
+            return source
+
+    for source in sources:
+        if source.startswith("alsa_input"):
             return source
     return sources[0] if sources else None
 
@@ -169,6 +182,17 @@ def _cards() -> list[dict]:
     return cards
 
 
+def _best_mic_profile(profiles: list[str]) -> list[str]:
+    """Put the wideband headset profile before the 8 kHz one.
+
+    CVSD is the old Bluetooth speech codec and only carries 8 kHz audio,
+    which is noticeably harder to transcribe. mSBC uses 16 kHz.
+    """
+    wideband = [profile for profile in profiles if not profile.endswith("-cvsd")]
+    narrowband = [profile for profile in profiles if profile.endswith("-cvsd")]
+    return wideband + narrowband
+
+
 def _switch_profile(card: str, profile: str) -> bool:
     try:
         result = subprocess.run(
@@ -195,7 +219,7 @@ def enable_bluetooth_microphone() -> str | None:
         active = card["active"]
         if active and active.startswith("headset"):
             continue
-        for profile in card["mic"]:
+        for profile in _best_mic_profile(card["mic"]):
             if _switch_profile(card["name"], profile):
                 return profile
     return None
@@ -215,7 +239,7 @@ def ensure_microphone_profile(source: str | None) -> str | None:
         active = entry["active"]
         if active and active.startswith("headset"):
             return None
-        for profile in entry["mic"]:
+        for profile in _best_mic_profile(entry["mic"]):
             if _switch_profile(card, profile):
                 return profile
     return None

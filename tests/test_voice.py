@@ -209,6 +209,10 @@ class SpeechCleaningTests(unittest.TestCase):
         self.assertEqual(clean_for_speech("*...*"), "")
         self.assertEqual(clean_for_speech("   "), "")
 
+    def test_drops_emoji(self):
+        self.assertEqual(clean_for_speech("Great job! 🎉"), "Great job!")
+        self.assertEqual(clean_for_speech("Nice ❤️ work"), "Nice work")
+
     def test_leaves_plain_speech_alone(self):
         text = "I will be there at 5:30, if that works for you."
         self.assertEqual(clean_for_speech(text), text)

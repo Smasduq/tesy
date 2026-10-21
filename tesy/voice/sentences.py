@@ -115,6 +115,7 @@ BACKTICKS = re.compile(r"`+")
 HEADING = re.compile(r"(?m)^\s{0,3}#{1,6}\s*")
 BULLET = re.compile(r"(?m)^\s*[-+]\s+")
 QUOTE = re.compile(r"(?m)^\s*>\s?")
+EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]")
 
 
 def clean_for_speech(text: str) -> str:
@@ -133,5 +134,6 @@ def clean_for_speech(text: str) -> str:
     text = HEADING.sub("", text)
     text = BULLET.sub("", text)
     text = QUOTE.sub("", text)
+    text = EMOJI.sub("", text)
     text = " ".join(text.split())
     return text if any(character.isalnum() for character in text) else ""

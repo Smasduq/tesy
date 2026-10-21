@@ -98,6 +98,8 @@ python main.py "say that again" --speak   # one reply, spoken
 
 `--talk` prints what it heard and then streams the answer to the voice
 sentence by sentence, so speech starts before the model has finished writing.
+Markdown is stripped before it reaches the voice: `*emphasis*` is spoken as
+the word, links as their label, and URLs are skipped instead of spelled out.
 
 The installer is a one-time download of about 150 MB and needs no root. It
 puts everything under `~/.local/share/tesy/`:

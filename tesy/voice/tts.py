@@ -12,6 +12,7 @@ import shutil
 import subprocess
 
 from .config import VoiceConfig
+from .sentences import clean_for_speech
 
 PIPER_RATE = 22050
 
@@ -105,6 +106,9 @@ class PiperSpeaker:
 
     def synthesize(self, text: str) -> bytes:
         """Return raw signed 16 bit PCM for ``text``."""
+        text = clean_for_speech(text)
+        if not text:
+            return b""
         worker = self._worker()
         if worker is None:
             return self._synthesize_with_command(text)

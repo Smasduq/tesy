@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 ABBREVIATIONS = {
     "mr",
     "mrs",
@@ -101,3 +103,35 @@ class SentenceBuffer:
         remainder = self._buffer.strip()
         self._buffer = ""
         return [remainder] if remainder else []
+
+
+# Markdown that a voice should not say out loud. piper reads "*" as
+# "asterisk" and happily spells out a whole URL.
+LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+URL = re.compile(r"https?://\S+")
+MULTIPLICATION = re.compile(r"(?<=\d)\s*\*\s*(?=\d)")
+ASTERISKS = re.compile(r"\*+")
+BACKTICKS = re.compile(r"`+")
+HEADING = re.compile(r"(?m)^\s{0,3}#{1,6}\s*")
+BULLET = re.compile(r"(?m)^\s*[-+]\s+")
+QUOTE = re.compile(r"(?m)^\s*>\s?")
+
+
+def clean_for_speech(text: str) -> str:
+    """Strip the markdown that would otherwise be read out literally.
+
+    Emphasis markers become the words they emphasise; links become their
+    label; a bare URL is dropped rather than spelled out; ``2 * 3`` becomes
+    "2 times 3". Anything that is only punctuation becomes empty, so the
+    caller can skip it.
+    """
+    text = LINK.sub(r"\1", text)
+    text = URL.sub(" ", text)
+    text = MULTIPLICATION.sub(" times ", text)
+    text = ASTERISKS.sub("", text)
+    text = BACKTICKS.sub("", text)
+    text = HEADING.sub("", text)
+    text = BULLET.sub("", text)
+    text = QUOTE.sub("", text)
+    text = " ".join(text.split())
+    return text if any(character.isalnum() for character in text) else ""

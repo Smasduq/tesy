@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tesy.voice import audio, sentences  # noqa: E402
+from tesy.voice.sentences import clean_for_speech  # noqa: E402
 from tesy.voice.config import (  # noqa: E402
     VoiceConfig,
     _best_mic_profile,
@@ -171,6 +172,46 @@ class SentenceTests(unittest.TestCase):
             sentences.split_sentences("Done. And then"),
             ["Done.", "And then"],
         )
+
+
+class SpeechCleaningTests(unittest.TestCase):
+    def test_removes_emphasis_asterisks(self):
+        self.assertEqual(clean_for_speech("That is *great* news."), "That is great news.")
+
+    def test_removes_bold_asterisks(self):
+        self.assertEqual(clean_for_speech("**Bold** move."), "Bold move.")
+
+    def test_turns_multiplication_into_a_word(self):
+        self.assertEqual(clean_for_speech("2 * 3 is six."), "2 times 3 is six.")
+
+    def test_keeps_link_labels(self):
+        self.assertEqual(
+            clean_for_speech("See [the docs](https://example.com/x)."),
+            "See the docs.",
+        )
+
+    def test_drops_bare_urls(self):
+        self.assertEqual(
+            clean_for_speech("Look at https://example.com/a/b now."),
+            "Look at now.",
+        )
+
+    def test_strips_headings_and_bullets(self):
+        self.assertEqual(
+            clean_for_speech("# Plan\n- one\n- two"),
+            "Plan one two",
+        )
+
+    def test_removes_backticks(self):
+        self.assertEqual(clean_for_speech("Run `make` first."), "Run make first.")
+
+    def test_punctuation_only_becomes_empty(self):
+        self.assertEqual(clean_for_speech("*...*"), "")
+        self.assertEqual(clean_for_speech("   "), "")
+
+    def test_leaves_plain_speech_alone(self):
+        text = "I will be there at 5:30, if that works for you."
+        self.assertEqual(clean_for_speech(text), text)
 
 
 class SentenceBufferTests(unittest.TestCase):

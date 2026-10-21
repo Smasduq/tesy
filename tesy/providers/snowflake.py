@@ -90,6 +90,7 @@ class SnowflakeProvider:
     default_model = DEFAULT_MODEL
     model_env_vars = ("SNOWFLAKE_MODEL",)
     default_max_tokens = DEFAULT_MAX_TOKENS
+    supports_tools = False
 
     def __init__(self, settings: SnowflakeSettings) -> None:
         self.settings = settings

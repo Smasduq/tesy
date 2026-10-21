@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .base import ChatRequest, ProviderError, StreamChunk
+from .base import ChatRequest, ProviderError, StreamChunk, ToolCall
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "minimax/minimax-m3.1-flash:free"
@@ -61,7 +62,29 @@ class OpenRouterSettings:
 
 
 def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
-    """Turn an OpenRouter SSE body into a stream of chunks."""
+    """Turn an OpenRouter SSE body into a stream of chunks.
+
+    Tool calls arrive as fragments: the id and name come once, then the
+    arguments are spread over several events. They are collected here and
+    yielded as one complete ``tool_call`` chunk when the model finishes.
+    """
+    partial: dict[int, dict[str, str]] = {}
+
+    def finished_tool_calls() -> Iterator[StreamChunk]:
+        for index in sorted(partial):
+            call = partial[index]
+            if not call["name"]:
+                continue
+            yield StreamChunk(
+                kind="tool_call",
+                tool_call=ToolCall(
+                    id=call["id"] or f"call_{index}",
+                    name=call["name"],
+                    arguments=call["arguments"] or "{}",
+                ),
+            )
+        partial.clear()
+
     for raw_line in lines:
         line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
         line = line.strip()
@@ -70,6 +93,7 @@ def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
 
         data = line[len("data:") :].strip()
         if data == "[DONE]":
+            yield from finished_tool_calls()
             return
 
         try:
@@ -90,6 +114,33 @@ def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
             content = delta.get("content")
             if isinstance(content, str) and content:
                 yield StreamChunk(text=content, kind="content")
+
+            for call in delta.get("tool_calls") or []:
+                index = call.get("index")
+                if not isinstance(index, int):
+                    index = 0
+                entry = partial.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                if isinstance(call.get("id"), str) and call["id"]:
+                    entry["id"] = call["id"]
+                function = call.get("function") or {}
+                if isinstance(function.get("name"), str) and function["name"]:
+                    entry["name"] = function["name"]
+                if isinstance(function.get("arguments"), str):
+                    entry["arguments"] += function["arguments"]
+
+            if choice.get("finish_reason"):
+                yield from finished_tool_calls()
+
+
+def _tool_unsupported(error: ProviderError) -> bool:
+    """Does this error mean the chosen model cannot use tools?"""
+    message = str(error).lower()
+    if "tool" not in message:
+        return False
+    return any(
+        hint in message
+        for hint in ("does not support", "not supported", "no endpoints", "unsupported")
+    )
 
 
 def list_models(base_url: str = DEFAULT_BASE_URL, timeout: int = 30) -> list[dict[str, Any]]:
@@ -118,6 +169,7 @@ class OpenRouterProvider:
     default_model = DEFAULT_MODEL
     model_env_vars = ("OPENROUTER_MODEL",)
     default_max_tokens = DEFAULT_MAX_TOKENS
+    supports_tools = True
 
     def __init__(self, settings: OpenRouterSettings) -> None:
         self.settings = settings
@@ -136,6 +188,23 @@ class OpenRouterProvider:
         return self.default_model
 
     def stream(self, request: ChatRequest) -> Iterator[StreamChunk]:
+        """Stream a reply, retrying without tools if the model refuses them."""
+        yielded = False
+        try:
+            for chunk in self._stream(request):
+                yielded = True
+                yield chunk
+        except ProviderError as error:
+            if yielded or not request.tools or not _tool_unsupported(error):
+                raise
+            print(
+                f"note: {request.model} does not support file tools; "
+                "carrying on without them.",
+                file=sys.stderr,
+            )
+            yield from self._stream(replace(request, tools=None))
+
+    def _stream(self, request: ChatRequest) -> Iterator[StreamChunk]:
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": [message.to_dict() for message in request.messages],
@@ -146,6 +215,8 @@ class OpenRouterProvider:
             payload["temperature"] = request.temperature
         if request.reasoning_effort:
             payload["reasoning"] = {"effort": request.reasoning_effort}
+        if request.tools:
+            payload["tools"] = request.tools
 
         headers = {
             "Authorization": f"Bearer {self.settings.api_key}",

@@ -70,6 +70,38 @@ python main.py --system "you are terse"      # one-off
 TESY_SYSTEM="..." python main.py "hello"      # environment
 ```
 
+## Files
+
+Tesy can look at files under your home directory. Three read-only tools are
+offered to the model:
+
+- `read_file` - a text file, with line numbers and an optional line range
+- `list_directory` - what is in a folder
+- `search_files` - find a phrase inside text files
+
+Nothing can be written, moved or deleted. Credential stores are refused
+outright: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.docker`, `.kube`, browser
+profiles, password managers, `.env`, `*.pem`, `*.key`, `id_*`, `.netrc` and
+similar. Symlinks that leave the home directory are not followed, binaries are
+skipped, and reads are capped at 128 KB. Every lookup is printed so you can
+see it happen:
+
+```
+  computer: read ~/Documents/notes.txt (lines 1-40)
+```
+
+The content Tesy reads is sent to the model. With the default OpenRouter
+backend that means it leaves this machine, so do not point Tesy at files you
+would not share with that provider. Turn the whole feature off with:
+
+```bash
+python main.py --no-computer "hello"
+TESY_COMPUTER=off python main.py --talk
+```
+
+File tools are only offered to providers that support tool calling, which is
+OpenRouter today.
+
 ## Fine-tuning
 
 OpenRouter cannot fine-tune models - there is no fine-tuning API. The free
@@ -190,6 +222,7 @@ TESY_MIC_SOURCE=file:/tmp/opencode/mixed.wav python main.py --talk
 --talk                                   Talk to Tesy with your voice
 --speak                                  Speak the reply out loud
 --no-tts                                 With --talk, listen and answer in text only
+--no-computer                            Do not let Tesy read files under your home
 --list-models                            List the models OpenRouter offers
 --free                                   With --list-models, show only the free ones
 --list-local-models                      List the models on the local Ollama server

@@ -7,6 +7,7 @@ import sys
 from typing import Iterable
 
 from .chat import Conversation
+from .computer import ComputerAccess
 from .config import env_get, load_env_file, system_prompt
 from .providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
 from .providers.base import ProviderError
@@ -90,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Speak the reply out loud",
     )
     parser.add_argument(
+        "--no-computer",
+        action="store_true",
+        help="Do not let Tesy read files under your home directory",
+    )
+    parser.add_argument(
         "--list-models",
         action="store_true",
         help="List the models available through OpenRouter and exit",
@@ -111,29 +117,51 @@ def resolve_provider_name(requested: str | None) -> str:
     return requested or env_get("TESY_PROVIDER") or DEFAULT_PROVIDER
 
 
+def computer_enabled(disabled: bool = False) -> bool:
+    """Is read access to the home directory switched on?"""
+    if disabled:
+        return False
+    value = (env_get("TESY_COMPUTER") or "").strip().casefold()
+    return value not in {"0", "off", "false", "no", "disabled"}
+
+
+def build_computer(provider, disabled: bool = False) -> ComputerAccess | None:
+    """Create the read-only file tools when the provider can use them."""
+    if not computer_enabled(disabled) or not getattr(provider, "supports_tools", False):
+        return None
+
+    def announce(action: str) -> None:
+        # The reply may be halfway through a line when a tool runs.
+        sys.stderr.write(f"\n  computer: {action}\n")
+        sys.stderr.flush()
+
+    return ComputerAccess(on_action=announce)
+
+
 def resolve_system_prompt(requested: str | None) -> str:
     return system_prompt(requested)
 
 
 def print_reply(conversation: Conversation, user_text: str, show_reasoning: bool = False) -> None:
     """Stream a reply to the terminal."""
-    pieces: list[str] = []
-    for chunk in conversation.provider.stream(conversation.ask(user_text)):
+    for chunk in conversation.turn(user_text):
         if chunk.kind == "reasoning":
             if show_reasoning:
                 sys.stderr.write(chunk.text)
                 sys.stderr.flush()
             continue
-        pieces.append(chunk.text)
+        if chunk.kind != "content":
+            continue
         sys.stdout.write(chunk.text)
         sys.stdout.flush()
-    conversation.remember_reply("".join(pieces))
     sys.stdout.write("\n")
     sys.stdout.flush()
 
 
 def run_interactive(conversation: Conversation, show_reasoning: bool = False) -> int:
     print(f"Tesy is listening ({conversation.model}). Ctrl-D or 'exit' to stop.")
+    if conversation.tools is not None:
+        print(f"Tesy can read files under {conversation.tools.root} (read-only).")
     while True:
         try:
             user_input = input("\nYou: ").strip()
@@ -203,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         temperature=args.temperature,
         reasoning_effort=args.reasoning_effort,
         history_limit=HISTORY_LIMIT,
+        tools=build_computer(provider, disabled=args.no_computer),
     )
 
     try:

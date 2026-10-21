@@ -115,6 +115,8 @@ class VoiceLoop:
         print(f"  microphone: {self.config.mic_source}")
         print(f"  speaker:    {self.config.speaker}")
         print(f"  voice:      {self.config.tts_model.name}")
+        if self.conversation.tools is not None:
+            print(f"  files:      read-only under {self.conversation.tools.root}")
 
         if self.speak:
             # Load the voice while the first question is still being asked.

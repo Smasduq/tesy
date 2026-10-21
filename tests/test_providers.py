@@ -11,8 +11,13 @@ from tesy.config import env_get, load_env_file, system_prompt  # noqa: E402
 from tesy.prompt import DEFAULT_SYSTEM_PROMPT  # noqa: E402
 from tesy.providers import PROVIDERS, get_provider  # noqa: E402
 from tesy.providers import local, openrouter, snowflake  # noqa: E402
-from tesy.providers.base import Message, ProviderError  # noqa: E402
-from tesy.cli import resolve_provider_name, resolve_system_prompt  # noqa: E402
+from tesy.providers.base import Message, ProviderError, ToolCall  # noqa: E402
+from tesy.cli import (  # noqa: E402
+    build_computer,
+    computer_enabled,
+    resolve_provider_name,
+    resolve_system_prompt,
+)
 
 
 def texts(chunks):
@@ -54,6 +59,41 @@ class OpenRouterStreamTests(unittest.TestCase):
         chunks = list(openrouter.parse_stream(lines))
         self.assertEqual([chunk.kind for chunk in chunks], ["reasoning", "content"])
         self.assertEqual(texts(chunks), ["thinking", "answer"])
+
+    def test_assembles_a_streamed_tool_call(self):
+        lines = [
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+            b'"type":"function","function":{"name":"read_file","arguments":""}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"arguments":"{\\"path\\":"}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"arguments":" \\"notes.txt\\"}"}}]}}]}',
+            b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+            b"data: [DONE]",
+        ]
+        chunks = list(openrouter.parse_stream(lines))
+        tool_chunks = [chunk for chunk in chunks if chunk.kind == "tool_call"]
+        self.assertEqual(len(tool_chunks), 1)
+        call = tool_chunks[0].tool_call
+        self.assertEqual(call.id, "call_1")
+        self.assertEqual(call.name, "read_file")
+        self.assertEqual(call.arguments, '{"path": "notes.txt"}')
+
+    def test_keeps_parallel_tool_calls_apart(self):
+        lines = [
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a",'
+            b'"function":{"name":"read_file","arguments":"{}"}}]}}]}',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b",'
+            b'"function":{"name":"list_directory","arguments":"{}"}}]}}]}',
+            b"data: [DONE]",
+        ]
+        calls = [
+            chunk.tool_call
+            for chunk in openrouter.parse_stream(lines)
+            if chunk.kind == "tool_call"
+        ]
+        self.assertEqual([call.name for call in calls], ["read_file", "list_directory"])
+        self.assertEqual([call.id for call in calls], ["a", "b"])
 
     def test_default_model_is_free(self):
         self.assertTrue(openrouter.DEFAULT_MODEL.endswith(":free"))
@@ -150,6 +190,32 @@ class ProviderRegistryTests(unittest.TestCase):
                 os.environ["OPENROUTER_MODEL"] = previous
 
 
+class ComputerConfigTests(unittest.TestCase):
+    class ToolProvider:
+        supports_tools = True
+
+    class PlainProvider:
+        supports_tools = False
+
+    def test_enabled_by_default(self):
+        with tempfile_env({"TESY_COMPUTER": ""}):
+            self.assertTrue(computer_enabled())
+
+    def test_disabled_by_flag(self):
+        self.assertFalse(computer_enabled(disabled=True))
+
+    def test_disabled_by_environment(self):
+        for value in ("off", "0", "false", "no", "disabled"):
+            with tempfile_env({"TESY_COMPUTER": value}):
+                self.assertFalse(computer_enabled(), value)
+
+    def test_only_for_tool_capable_providers(self):
+        with tempfile_env({"TESY_COMPUTER": ""}):
+            self.assertIsNotNone(build_computer(self.ToolProvider()))
+            self.assertIsNone(build_computer(self.PlainProvider()))
+            self.assertIsNone(build_computer(self.ToolProvider(), disabled=True))
+
+
 class ConfigTests(unittest.TestCase):
     def test_env_file_does_not_override_existing_values(self):
         with tempfile_env({"TESY_TEST_KEY": "from-environment"}):
@@ -196,6 +262,37 @@ class MessageTests(unittest.TestCase):
         self.assertEqual(
             Message(role="user", content="hi").to_dict(),
             {"role": "user", "content": "hi"},
+        )
+
+    def test_tool_call_dict(self):
+        message = Message(
+            role="assistant",
+            content="",
+            tool_calls=(ToolCall("call_1", "read_file", '{"path": "x"}'),),
+        )
+        self.assertEqual(
+            message.to_dict()["tool_calls"],
+            [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "x"}'},
+                }
+            ],
+        )
+
+    def test_tool_result_dict(self):
+        message = Message(
+            role="tool", content="hello", tool_call_id="call_1", name="read_file"
+        )
+        self.assertEqual(
+            message.to_dict(),
+            {
+                "role": "tool",
+                "content": "hello",
+                "tool_call_id": "call_1",
+                "name": "read_file",
+            },
         )
 
 

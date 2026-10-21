@@ -76,6 +76,7 @@ class LocalProvider:
     default_model = DEFAULT_MODEL
     model_env_vars = ("OLLAMA_MODEL",)
     default_max_tokens = DEFAULT_MAX_TOKENS
+    supports_tools = False
 
     def __init__(self, settings: LocalSettings) -> None:
         self.settings = settings

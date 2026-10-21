@@ -231,6 +231,18 @@ class TranscriptCleaningTests(unittest.TestCase):
     def test_keeps_real_speech(self):
         self.assertEqual(clean_transcript(" what is the weather "), "what is the weather")
 
+    def test_drops_invented_sound_descriptions(self):
+        self.assertEqual(clean_transcript("(indistinct chatter)"), "")
+        self.assertEqual(clean_transcript("[music] (upbeat music)"), "")
+        self.assertEqual(clean_transcript("[BLANK_AUDIO]"), "")
+
+    def test_keeps_speech_around_a_sound_description(self):
+        self.assertEqual(clean_transcript("(sighs) not again"), "not again")
+        self.assertEqual(clean_transcript("hello [laughs] there"), "hello there")
+
+    def test_collapses_extra_spaces(self):
+        self.assertEqual(clean_transcript("  hello   there  "), "hello there")
+
 
 class WavReaderTests(unittest.TestCase):
     def _write_wav(self, folder: str, samples: bytes, rate: int = 16000) -> Path:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -16,11 +17,15 @@ HALLUCINATIONS = {
     "thank you.",
     "thanks for watching!",
     "please subscribe to my channel.",
+    "subtitles by the amara.org community",
     "[blank_audio]",
     "(silence)",
     "bye.",
     ".",
 }
+
+# Sound descriptions rather than words: "[BLANK_AUDIO]", "(indistinct chatter)".
+NOISE_MARKUP = re.compile(r"[\[(][^\])]*[\])]")
 
 
 class TranscriptionError(RuntimeError):
@@ -99,16 +104,19 @@ class WhisperTranscriber:
 
 def clean_transcript(text: str) -> str:
     """Strip whisper's decorations and the phrases it invents out of silence."""
+    # Whisper wraps sounds it cannot name as speech in brackets or
+    # parentheses: "[BLANK_AUDIO]", "(indistinct chatter)", "[music]".
+    text = NOISE_MARKUP.sub(" ", text)
+
     lines = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        if line.startswith("[") and line.endswith("]"):
-            continue
         lines.append(line)
 
     cleaned = " ".join(lines).strip()
+    cleaned = " ".join(cleaned.split())
     if cleaned.lower() in HALLUCINATIONS:
         return ""
     return cleaned

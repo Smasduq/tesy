@@ -30,6 +30,9 @@ class Utterance:
     sample_rate: int = SAMPLE_RATE
     duration_s: float = 0.0
 
+    def __repr__(self) -> str:
+        return f"Utterance(duration_s={self.duration_s:.2f}, bytes={len(self.samples)})"
+
     def to_wav(self) -> bytes:
         return to_wav(self.samples, self.sample_rate)
 

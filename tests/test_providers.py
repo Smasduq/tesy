@@ -11,7 +11,7 @@ from tesy.config import env_get, load_env_file, system_prompt  # noqa: E402
 from tesy.prompt import DEFAULT_SYSTEM_PROMPT  # noqa: E402
 from tesy.providers import PROVIDERS, get_provider  # noqa: E402
 from tesy.providers import local, openrouter, snowflake  # noqa: E402
-from tesy.providers.base import Message, ProviderError, ToolCall  # noqa: E402
+from tesy.providers.base import ChatRequest, Message, ProviderError, ToolCall  # noqa: E402
 from tesy.cli import (  # noqa: E402
     build_computer,
     computer_enabled,
@@ -97,6 +97,51 @@ class OpenRouterStreamTests(unittest.TestCase):
 
     def test_default_model_is_free(self):
         self.assertTrue(openrouter.DEFAULT_MODEL.endswith(":free"))
+
+
+class SnowflakePayloadTests(unittest.TestCase):
+    def test_system_prompt_is_top_level(self):
+        request = ChatRequest(
+            messages=[
+                Message(role="system", content="Be kind."),
+                Message(role="user", content="Hello"),
+            ],
+            model="claude-sonnet-4-5",
+        )
+        payload = snowflake.build_payload(request)
+        self.assertEqual(payload["system"], "Be kind.")
+        self.assertEqual(payload["messages"], [{"role": "user", "content": "Hello"}])
+
+    def test_joins_multiple_system_messages(self):
+        request = ChatRequest(
+            messages=[
+                Message(role="system", content="One"),
+                Message(role="system", content="Two"),
+                Message(role="user", content="Hi"),
+            ],
+            model="claude-sonnet-4-5",
+        )
+        self.assertEqual(snowflake.build_payload(request)["system"], "One\n\nTwo")
+
+    def test_omits_system_when_absent(self):
+        request = ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            model="claude-sonnet-4-5",
+        )
+        self.assertNotIn("system", snowflake.build_payload(request))
+
+    def test_includes_temperature_only_when_set(self):
+        request = ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            model="claude-sonnet-4-5",
+        )
+        self.assertNotIn("temperature", snowflake.build_payload(request))
+        request = ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            model="claude-sonnet-4-5",
+            temperature=0.4,
+        )
+        self.assertEqual(snowflake.build_payload(request)["temperature"], 0.4)
 
 
 class SnowflakeStreamTests(unittest.TestCase):

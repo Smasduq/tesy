@@ -57,6 +57,34 @@ class SnowflakeSettings:
         return cls(account_url=account_url, token=token)
 
 
+def build_payload(request: ChatRequest) -> dict[str, Any]:
+    """Turn a chat request into the Anthropic-style Cortex payload.
+
+    Cortex takes the system prompt as a top-level ``system`` field and
+    rejects ``system`` messages inside ``messages``.
+    """
+    system_parts = [
+        message.content
+        for message in request.messages
+        if message.role == "system" and message.content
+    ]
+    messages = [
+        message.to_dict() for message in request.messages if message.role != "system"
+    ]
+
+    payload: dict[str, Any] = {
+        "model": request.model,
+        "max_tokens": request.max_tokens,
+        "messages": messages,
+        "stream": True,
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+    if request.temperature is not None:
+        payload["temperature"] = request.temperature
+    return payload
+
+
 def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
     """Turn a Snowflake Cortex SSE body into a stream of chunks."""
     for raw_line in lines:
@@ -114,12 +142,7 @@ class SnowflakeProvider:
             account_url = f"https://{account_url}"
         url = f"{account_url.rstrip('/')}{API_PATH}"
 
-        payload: dict[str, Any] = {
-            "model": request.model,
-            "max_tokens": request.max_tokens,
-            "messages": [message.to_dict() for message in request.messages],
-            "stream": True,
-        }
+        payload = build_payload(request)
 
         http_request = Request(
             url,

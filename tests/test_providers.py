@@ -1,5 +1,6 @@
 """Tests for the provider layer: ``python -m unittest discover -s tests``."""
 
+import json
 import os
 import sys
 import unittest
@@ -143,6 +144,88 @@ class SnowflakePayloadTests(unittest.TestCase):
         )
         self.assertEqual(snowflake.build_payload(request)["temperature"], 0.4)
 
+    def test_converts_tools_to_anthropic_schema(self):
+        request = ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            model="claude-sonnet-4-5",
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "description": "Read a file",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"],
+                        },
+                    },
+                }
+            ],
+        )
+        tool = snowflake.build_payload(request)["tools"][0]
+        self.assertEqual(tool["name"], "read_file")
+        self.assertEqual(tool["description"], "Read a file")
+        self.assertEqual(tool["input_schema"], request.tools[0]["function"]["parameters"])
+        self.assertNotIn("function", tool)
+
+    def test_omits_tools_when_absent(self):
+        request = ChatRequest(
+            messages=[Message(role="user", content="Hi")],
+            model="claude-sonnet-4-5",
+        )
+        self.assertNotIn("tools", snowflake.build_payload(request))
+
+    def test_assistant_tool_call_becomes_tool_use_block(self):
+        request = ChatRequest(
+            messages=[
+                Message(
+                    role="assistant",
+                    content="Looking.",
+                    tool_calls=(
+                        ToolCall(id="call_1", name="read_file", arguments='{"path":"a.txt"}'),
+                    ),
+                )
+            ],
+            model="claude-sonnet-4-5",
+        )
+        message = snowflake.build_payload(request)["messages"][0]
+        self.assertEqual(message["role"], "assistant")
+        self.assertEqual(message["content"][0], {"type": "text", "text": "Looking."})
+        self.assertEqual(
+            message["content"][1],
+            {
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": {"path": "a.txt"},
+            },
+        )
+
+    def test_tool_result_becomes_user_tool_result_block(self):
+        request = ChatRequest(
+            messages=[
+                Message(role="user", content="my notes"),
+                Message(
+                    role="tool",
+                    content="a.txt (1 line)",
+                    tool_call_id="call_1",
+                    name="read_file",
+                ),
+            ],
+            model="claude-sonnet-4-5",
+        )
+        message = snowflake.build_payload(request)["messages"][1]
+        self.assertEqual(message["role"], "user")
+        self.assertEqual(
+            message["content"][0],
+            {
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": "a.txt (1 line)",
+            },
+        )
+
 
 class SnowflakeStreamTests(unittest.TestCase):
     def test_parses_content_block_delta(self):
@@ -160,6 +243,33 @@ class SnowflakeStreamTests(unittest.TestCase):
         lines = [b'data: {"error":{"message":"no access"}}']
         with self.assertRaises(ProviderError):
             list(snowflake.parse_stream(lines))
+
+    def test_collects_streamed_tool_call(self):
+        lines = [
+            b'data: {"type":"content_block_start","index":0,'
+            b'"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file"}}',
+            b'data: {"type":"content_block_delta","index":0,'
+            b'"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":"}}',
+            b'data: {"type":"content_block_delta","index":0,'
+            b'"delta":{"type":"input_json_delta","partial_json":" \\"a.txt\\"}"}}',
+            b'data: {"type":"content_block_stop","index":0}',
+        ]
+        calls = [
+            chunk.tool_call
+            for chunk in snowflake.parse_stream(lines)
+            if chunk.kind == "tool_call"
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].id, "toolu_1")
+        self.assertEqual(calls[0].name, "read_file")
+        self.assertEqual(json.loads(calls[0].arguments), {"path": "a.txt"})
+
+    def test_ignores_text_delta_of_other_type(self):
+        lines = [
+            b'data: {"type":"content_block_delta","index":0,'
+            b'"delta":{"type":"input_json_delta","partial_json":"{}"}}'
+        ]
+        self.assertEqual(texts(snowflake.parse_stream(lines)), [])
 
 
 class LocalProviderTests(unittest.TestCase):

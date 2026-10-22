@@ -14,7 +14,7 @@ from typing import Any, Iterable, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .base import ChatRequest, ProviderError, StreamChunk
+from .base import ChatRequest, Message, ProviderError, StreamChunk, ToolCall
 
 API_PATH = "/api/v2/cortex/v1/messages"
 DEFAULT_MODEL = "claude-sonnet-4-5"
@@ -57,6 +57,62 @@ class SnowflakeSettings:
         return cls(account_url=account_url, token=token)
 
 
+def _openai_tools_to_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rewrite OpenAI-style tool schemas the way Cortex expects them."""
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        function = tool.get("function") if tool.get("type") == "function" else tool
+        if not isinstance(function, dict) or not function.get("name"):
+            continue
+        converted.append(
+            {
+                "name": function["name"],
+                "description": function.get("description", ""),
+                "input_schema": function.get("parameters")
+                or {"type": "object", "properties": {}},
+            }
+        )
+    return converted
+
+
+def _to_anthropic_message(message: Message) -> dict[str, Any]:
+    """Turn one conversation message into an Anthropic-style entry.
+
+    Assistant tool calls become ``tool_use`` blocks, and a tool result
+    becomes a user message holding a ``tool_result`` block. That is how the
+    Anthropic format pairs a request with its result.
+    """
+    if message.role == "tool":
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id or "",
+                    "content": message.content,
+                }
+            ],
+        }
+
+    if message.role == "assistant" and message.tool_calls:
+        blocks: list[dict[str, Any]] = []
+        if message.content:
+            blocks.append({"type": "text", "text": message.content})
+        for call in message.tool_calls:
+            try:
+                arguments = json.loads(call.arguments or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            blocks.append(
+                {"type": "tool_use", "id": call.id, "name": call.name, "input": arguments}
+            )
+        return {"role": "assistant", "content": blocks}
+
+    return {"role": message.role, "content": message.content}
+
+
 def build_payload(request: ChatRequest) -> dict[str, Any]:
     """Turn a chat request into the Anthropic-style Cortex payload.
 
@@ -69,7 +125,9 @@ def build_payload(request: ChatRequest) -> dict[str, Any]:
         if message.role == "system" and message.content
     ]
     messages = [
-        message.to_dict() for message in request.messages if message.role != "system"
+        _to_anthropic_message(message)
+        for message in request.messages
+        if message.role != "system"
     ]
 
     payload: dict[str, Any] = {
@@ -82,11 +140,37 @@ def build_payload(request: ChatRequest) -> dict[str, Any]:
         payload["system"] = "\n\n".join(system_parts)
     if request.temperature is not None:
         payload["temperature"] = request.temperature
+    if request.tools:
+        converted = _openai_tools_to_anthropic(request.tools)
+        if converted:
+            payload["tools"] = converted
     return payload
 
 
 def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
-    """Turn a Snowflake Cortex SSE body into a stream of chunks."""
+    """Turn a Snowflake Cortex SSE body into a stream of chunks.
+
+    Text arrives as ``content_block_delta`` events. A tool call arrives as a
+    ``tool_use`` block whose arguments stream in as ``input_json_delta``
+    fragments, so they are collected and yielded as one finished chunk.
+    """
+    partial: dict[int, dict[str, str]] = {}
+
+    def finished_tool_calls() -> Iterator[StreamChunk]:
+        for index in sorted(partial):
+            call = partial[index]
+            if not call["name"]:
+                continue
+            yield StreamChunk(
+                kind="tool_call",
+                tool_call=ToolCall(
+                    id=call["id"] or f"call_{index}",
+                    name=call["name"],
+                    arguments=call["arguments"] or "{}",
+                ),
+            )
+        partial.clear()
+
     for raw_line in lines:
         line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
         line = line.strip()
@@ -95,6 +179,7 @@ def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
 
         data = line[len("data:") :].strip()
         if data == "[DONE]":
+            yield from finished_tool_calls()
             return
 
         try:
@@ -105,9 +190,42 @@ def parse_stream(lines: Iterable[bytes | str]) -> Iterator[StreamChunk]:
         if "error" in event:
             raise ProviderError(f"Snowflake API error: {event['error']}")
 
-        delta = event.get("delta", {})
+        kind = event.get("type")
+
+        if kind == "content_block_start":
+            block = event.get("content_block") or {}
+            if block.get("type") == "tool_use":
+                index = event.get("index")
+                if not isinstance(index, int):
+                    index = 0
+                partial[index] = {
+                    "id": block.get("id") or "",
+                    "name": block.get("name") or "",
+                    "arguments": "",
+                }
+            continue
+
+        if kind == "content_block_stop":
+            yield from finished_tool_calls()
+            continue
+
+        if kind != "content_block_delta":
+            continue
+
+        delta = event.get("delta") or {}
+
+        if delta.get("type") == "input_json_delta":
+            index = event.get("index")
+            if not isinstance(index, int):
+                index = 0
+            entry = partial.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            fragment = delta.get("partial_json")
+            if isinstance(fragment, str):
+                entry["arguments"] += fragment
+            continue
+
         text = delta.get("text")
-        if event.get("type") == "content_block_delta" and isinstance(text, str):
+        if isinstance(text, str):
             yield StreamChunk(text=text, kind="content")
 
 
@@ -118,7 +236,7 @@ class SnowflakeProvider:
     default_model = DEFAULT_MODEL
     model_env_vars = ("SNOWFLAKE_MODEL",)
     default_max_tokens = DEFAULT_MAX_TOKENS
-    supports_tools = False
+    supports_tools = True
 
     def __init__(self, settings: SnowflakeSettings) -> None:
         self.settings = settings

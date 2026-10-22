@@ -163,6 +163,9 @@ class Recorder:
             command = [
                 "pw-cat",
                 "--record",
+                # Without --raw pw-cat writes a small container header into
+                # the stream, which offsets every sample by a few bytes.
+                "--raw",
                 "--rate",
                 str(SAMPLE_RATE),
                 "--channels",

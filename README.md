@@ -198,6 +198,38 @@ problem (quiet, clipped, distorted) from a model problem. The usual causes,
 in order: the wrong microphone, a headset on CVSD, speaking before the
 stream settles, and the tiny model on a noisy room.
 
+For a controlled test, `scripts/stt_check.py` records eight seconds with no
+voice detection, prints the level and clipping, shows the part of the clip the
+detector would keep, and transcribes both the whole clip and that part:
+
+```bash
+python scripts/stt_check.py
+```
+
+It asks you to say "The quick brown fox jumps over the lazy dog." If the whole
+clip is right but the detector's part is cut, raise `TESY_VAD_SILENCE_MS` (1000
+is a good start). If the whole clip is wrong, try the other microphone:
+
+```bash
+python scripts/stt_check.py --mic alsa_input.pci-0000_00_1f.3.analog-stereo
+```
+
+Compare the saved WAVs by ear as well as by transcript. To see whether the
+model is the limit, transcribe the same clip with more than one model:
+
+```bash
+python scripts/stt_check.py --file ~/.local/share/tesy/stt-check.wav \
+    --models base.en small.en-q5_1
+```
+
+`ggml-small.en-q5_1.bin` is more accurate than base on accents and noise, but
+on a CPU without a GPU it takes about 12 seconds for a five second clip, so it
+is opt-in rather than the default. Download it into `models/` and set
+`TESY_STT_MODEL` to use it.
+
+If a Bluetooth headset is the microphone, remember that its headset profile is
+narrowband. The laptop's built-in microphone is often clearer for dictation.
+
 ### Trying it without a microphone
 
 `file:` sources replay a 16 kHz mono WAV through the whole pipeline, which is

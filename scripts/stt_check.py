@@ -48,6 +48,7 @@ SENTENCE = "The quick brown fox jumps over the lazy dog."
 
 def capture(config: VoiceConfig, seconds: float) -> bytes:
     """Record raw 16 kHz mono audio for a fixed number of seconds."""
+    wanted = int(SAMPLE_RATE * 2 * seconds)
     command = [
         "pw-cat",
         "--record",
@@ -58,12 +59,12 @@ def capture(config: VoiceConfig, seconds: float) -> bytes:
         "1",
         "--format",
         "s16",
+        "--sample-count",
+        str(wanted // 2),
     ]
     if config.mic_source:
         command.append(f"--target={config.mic_source}")
     command.append("-")
-
-    wanted = int(SAMPLE_RATE * 2 * seconds)
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
     )

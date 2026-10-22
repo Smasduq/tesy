@@ -10,15 +10,21 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 
 from .config import VoiceConfig
 from .sentences import clean_for_speech
 
 PIPER_RATE = 22050
+FLUSH_TIMEOUT_S = 2.0
 
 
 class SpeechError(RuntimeError):
     """Raised when piper cannot run."""
+
+
+class InterruptedSpeech(RuntimeError):
+    """Raised inside the speech pipeline once the user has cut in."""
 
 
 class PiperSpeaker:
@@ -29,6 +35,16 @@ class PiperSpeaker:
         self._process: subprocess.Popen | None = None
         self._log = None
         self._rate = PIPER_RATE
+        self._lock = threading.RLock()
+        self._player: subprocess.Popen | None = None
+        self._stop = threading.Event()
+
+    @property
+    def is_playing(self) -> bool:
+        """Is a sentence coming out of the speaker right now?"""
+        with self._lock:
+            player = self._player
+        return player is not None and player.poll() is None
 
     # -- the worker --------------------------------------------------------
     def _start_worker(self) -> subprocess.Popen | None:
@@ -46,6 +62,7 @@ class PiperSpeaker:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._log,
+            start_new_session=True,
         )
 
         header = process.stdout.readline()
@@ -68,19 +85,20 @@ class PiperSpeaker:
         return self._process
 
     def _stop_worker(self) -> None:
-        if self._process is None:
+        process = self._process
+        self._process = None
+        if process is None:
             return
         try:
-            if self._process.stdin:
-                self._process.stdin.write(b'{"cmd": "quit"}\n')
-                self._process.stdin.flush()
+            if process.stdin:
+                process.stdin.write(b'{"cmd": "quit"}\n')
+                process.stdin.flush()
         except (OSError, ValueError):
             pass
         try:
-            self._process.wait(timeout=5)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            self._process.kill()
-        self._process = None
+            process.kill()
 
     def close(self) -> None:
         """Shut the helper down."""
@@ -106,6 +124,7 @@ class PiperSpeaker:
 
     def synthesize(self, text: str) -> bytes:
         """Return raw signed 16 bit PCM for ``text``."""
+        self._check_stop()
         text = clean_for_speech(text)
         if not text:
             return b""
@@ -114,6 +133,8 @@ class PiperSpeaker:
             return self._synthesize_with_command(text)
         try:
             return self._ask_worker(worker, text)
+        except InterruptedSpeech:
+            raise
         except SpeechError:
             # The helper may have died between sentences, give it one retry.
             self._stop_worker()
@@ -171,11 +192,14 @@ class PiperSpeaker:
                 input=text.encode("utf-8"),
                 capture_output=True,
                 timeout=120,
+                start_new_session=True,
             )
         except subprocess.TimeoutExpired as error:
             raise SpeechError("piper timed out") from error
         except OSError as error:
             raise SpeechError(f"could not run piper: {error}") from error
+
+        self._check_stop()
 
         if result.returncode != 0:
             detail = result.stderr.decode("utf-8", errors="replace").strip()
@@ -192,7 +216,13 @@ class PiperSpeaker:
         self.play(audio)
 
     def play(self, audio: bytes) -> None:
-        """Play raw signed 16 bit PCM through PipeWire."""
+        """Play raw signed 16 bit PCM through PipeWire.
+
+        The player runs as a child process and its progress is watched, so
+        :meth:`interrupt` can cut a sentence short the instant the user
+        starts talking. It runs in its own process group, which keeps
+        Ctrl-C in the terminal away from it.
+        """
         if not shutil.which("pw-play"):
             raise SpeechError("pw-play is not installed (PipeWire)")
 
@@ -211,8 +241,47 @@ class PiperSpeaker:
         command.append("-")
 
         try:
-            subprocess.run(command, input=audio, timeout=300)
-        except subprocess.TimeoutExpired as error:
-            raise SpeechError("playback timed out") from error
+            player = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
         except OSError as error:
             raise SpeechError(f"could not play audio: {error}") from error
+
+        with self._lock:
+            self._stop.clear()
+            self._player = player
+        try:
+            try:
+                player.communicate(audio, timeout=300)
+            except subprocess.TimeoutExpired as error:
+                player.kill()
+                player.communicate()
+                raise SpeechError("playback timed out") from error
+        finally:
+            with self._lock:
+                self._player = None
+
+    def interrupt(self) -> None:
+        """Stop the sentence being spoken, if any, and forget the rest."""
+        with self._lock:
+            self._stop.set()
+            player = self._player
+        if player is not None and player.poll() is None:
+            try:
+                player.terminate()
+            except OSError:
+                pass
+
+    def _check_stop(self) -> None:
+        if self._stop.is_set():
+            raise InterruptedSpeech()
+
+    def close(self) -> None:
+        """Shut the helper down."""
+        self._stop_worker()
+        if self._log is not None:
+            self._log.close()
+            self._log = None

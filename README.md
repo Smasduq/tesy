@@ -162,10 +162,12 @@ puts everything under `~/.local/share/tesy/`:
 | `TESY_MAX_UTTERANCE_S`  | `20`                             | Safety cap on a single turn                  |
 | `TESY_VAD_THRESHOLD`    | adaptive                         | Fixed level instead of noise tracking        |
 | `TESY_STT_THREADS`      | `4`                              | Whisper threads                              |
+| `TESY_BARGE_IN`         | `on`                             | Talk over Tesy to cut her off                |
 | `TESY_DEBUG_AUDIO`      | off                              | Directory to save each captured turn as WAV  |
 
-The microphone is only listened to while the voice is silent, so the half-duplex
-loop never transcribes Tesy's own speech.
+Tesy listens while she talks. Start speaking and she stops mid-sentence, keeps
+what you already said, and answers the new turn. Set `TESY_BARGE_IN=off` for a
+hands-free room where the microphone would otherwise pick up her own voice.
 
 ### Bluetooth headsets
 

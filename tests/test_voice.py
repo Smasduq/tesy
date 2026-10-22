@@ -20,14 +20,16 @@ from tesy.voice.config import (  # noqa: E402
     _best_mic_profile,
     resolve_voice_config,
 )
+from tesy.voice.loop import _Interrupter, _PrefixStream  # noqa: E402
 from tesy.voice.recorder import (  # noqa: E402
+    FRAME_BYTES,
     EndOfSource,
     Recorder,
     VoiceActivityDetector,
     _WavReader,
 )
 from tesy.voice.stt import clean_transcript  # noqa: E402
-from tesy.voice.tts import PiperSpeaker  # noqa: E402
+from tesy.voice.tts import InterruptedSpeech, PiperSpeaker  # noqa: E402
 
 
 def tone(samples: int, amplitude: float, sample_rate: int = 16000) -> bytes:

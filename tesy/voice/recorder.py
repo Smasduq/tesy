@@ -195,6 +195,14 @@ class Recorder:
                 path = Path(str(self.config.mic_source)[len("file:") :])
                 self._reader = _WavReader(path)
             return None, self._reader
+        return self.open_stream()
+
+    def open_stream(self) -> tuple[subprocess.Popen, object]:
+        """Start a capture subprocess and return it with its raw stream.
+
+        Kept separate from :meth:`record` so the pipeline can be opened
+        while Tesy is still speaking, ready for barge in.
+        """
         process = subprocess.Popen(
             self._command(),
             stdout=subprocess.PIPE,
@@ -203,10 +211,21 @@ class Recorder:
         )
         return process, process.stdout
 
-    def record(self, timeout_s: float | None = None) -> Utterance | None:
+    def record(
+        self,
+        timeout_s: float | None = None,
+        *,
+        stream: object | None = None,
+        process: subprocess.Popen | None = None,
+    ) -> Utterance | None:
         """Wait for someone to speak, then capture until they stop.
 
         Returns ``None`` if the microphone is unavailable or nothing was said.
+
+        ``stream`` and ``process`` let the caller hand over a capture that is
+        already running, so listening can start the moment a reply begins.
+        A borrowed capture is left alone: the caller started it and the caller
+        stops it.
         """
         if self.is_file_source and self._exhausted:
             raise EndOfSource(f"{self.config.mic_source} has no more audio")
@@ -214,7 +233,9 @@ class Recorder:
             raise RuntimeError("neither pw-cat nor parec is installed (PipeWire)")
 
         limit_s = timeout_s if timeout_s is not None else self.config.max_utterance_s
-        process, stream = self._open_source()
+        borrowed = stream is not None or process is not None
+        if not borrowed:
+            process, stream = self._open_source()
 
         detector = VoiceActivityDetector(
             threshold=self.config.threshold,
@@ -324,7 +345,7 @@ class Recorder:
                 if detector.feed(level_of(frame)) == "end":
                     break
         finally:
-            if process is not None:
+            if process is not None and not borrowed:
                 process.terminate()
                 try:
                     process.wait(timeout=5)

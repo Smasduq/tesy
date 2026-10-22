@@ -34,6 +34,7 @@ class VoiceConfig:
     threshold: float | None
     high_pass_hz: float
     threads: int
+    barge_in: bool = True
 
     @property
     def whisper_binary(self) -> Path | None:
@@ -61,6 +62,13 @@ class VoiceConfig:
         if override:
             return Path(override)
         return self.voice_dir / "piper_worker.py"
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = env_get(name)
+    if value is None:
+        return default
+    return value.strip().casefold() not in {"0", "off", "false", "no", "disabled"}
 
 
 def _int_env(name: str, default: int) -> int:
@@ -282,4 +290,5 @@ def resolve_voice_config() -> VoiceConfig:
         threshold=_float_env("TESY_VAD_THRESHOLD", None),
         high_pass_hz=float(_float_env("TESY_HIGH_PASS_HZ", 100.0)),
         threads=_int_env("TESY_STT_THREADS", 4),
+        barge_in=_bool_env("TESY_BARGE_IN", True),
     )

@@ -65,11 +65,14 @@ class _Interrupter:
     voice, and only then is the rest of the phrase transcribed properly.
     """
 
-    CALIBRATION_FRAMES = 10
+    CALIBRATION_FRAMES = 25
     REQUIRED_FRAMES = 4           # 80ms of speech, long enough to ignore a click
-    MIN_FRAMES_BEFORE_STOP = 6    # do not cut in on Tesy's own first syllables
     NOISE_FACTOR = 3.0
-    MIN_THRESHOLD = 0.02
+    NOISE_PERCENTILE = 0.25
+    # A hard lower bound only, for a signal that is digital silence. The room
+    # itself sets the real bar: an echo-cancelled microphone is very quiet,
+    # and a floor above it would count Tesy's own leakage as speech.
+    MIN_THRESHOLD = 0.004
 
     def __init__(self, recorder: Recorder, config: VoiceConfig) -> None:
         self.recorder = recorder
@@ -82,6 +85,8 @@ class _Interrupter:
         self._lock = threading.Lock()
         self._captured = b""
         self.heard_speech = False
+        self._calibrating = True
+        self._seen = 0
 
     # -- lifecycle ---------------------------------------------------------
     def open(self) -> bool:
@@ -130,31 +135,44 @@ class _Interrupter:
     def _threshold(self) -> float:
         if self.config.threshold is not None:
             return self.config.threshold
-        if len(self._levels) < self.CALIBRATION_FRAMES:
-            return self.MIN_THRESHOLD
+        if not self._levels:
+            return self.MIN_THRESHOLD * self.NOISE_FACTOR
         ordered = sorted(self._levels[-50:])
-        floor = ordered[len(ordered) // 2]
+        # The quietest quarter of the window is the room; the rest is the
+        # speech this window happens to contain. A low percentile keeps the
+        # threshold from creeping up with the voice it is meant to catch.
+        index = min(len(ordered) - 1, int(len(ordered) * self.NOISE_PERCENTILE))
+        floor = ordered[index]
         return max(self.MIN_THRESHOLD, floor * self.NOISE_FACTOR)
 
     def _watch(self) -> None:
         run = 0
-        frames = 0
         stream = self.stream
         try:
             while not self._stop.is_set():
                 frame = stream.read(FRAME_BYTES)
                 if not frame:
                     return
-                frames += 1
+                self._seen += 1
                 level = level_of(frame)
+
+                # Seed the noise floor first, without deciding anything: the
+                # opening frames are the only chance to learn what this room
+                # and this microphone actually sound like when nobody is
+                # talking. Judging them against a fixed threshold would let a
+                # noisy microphone look like speech straight away.
+                if self._calibrating:
+                    with self._lock:
+                        self._levels.append(level)
+                    if self._seen >= self.CALIBRATION_FRAMES:
+                        self._calibrating = False
+                    continue
+
                 threshold = self._threshold()
                 with self._lock:
                     if self.heard_speech:
                         self._captured += frame
                     elif level <= threshold:
-                        # Track the room, but never learn from something that
-                        # is already loud: speech in the median would drag the
-                        # threshold up above the voice it is meant to catch.
                         self._levels.append(level)
 
                 if level > threshold:
@@ -168,16 +186,13 @@ class _Interrupter:
                     run = 0
                     continue
 
-                if not self.heard_speech:
-                    if frames < self.MIN_FRAMES_BEFORE_STOP:
-                        continue
-                    if run >= self.REQUIRED_FRAMES:
-                        with self._lock:
-                            self.heard_speech = True
-                            self._captured = b""
-                        # Keep reading to keep the words that follow, but
-                        # stop the moment the user pauses.
-                        continue
+                if not self.heard_speech and run >= self.REQUIRED_FRAMES:
+                    with self._lock:
+                        self.heard_speech = True
+                        self._captured = b""
+                    # Keep reading to keep the words that follow, but stop
+                    # the moment the user pauses.
+                    continue
         except Exception:
             return
 

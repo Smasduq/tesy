@@ -17,8 +17,15 @@ WARMUP_MS = 300
 CALIBRATION_MS = 400
 PRE_ROLL_MS = 400
 MIN_THRESHOLD = 0.004
-MAX_CALIBRATION_FLOOR = 0.02
+MAX_CALIBRATION_FLOOR = 0.08
+# The loudest bar the room is ever allowed to set. Above this, speech on a
+# quiet microphone would stop counting as speech.
+MAX_THRESHOLD = 0.15
+# Speech has to be this much louder than the room. The room is measured at a
+# low percentile of its quiet quarters, so the threshold does not creep up
+# with the speech it is meant to catch.
 NOISE_FACTOR = 3.0
+NOISE_PERCENTILE = 0.25
 NOISE_WINDOW = 50  # frames, about one second
 NOISE_MIN_SAMPLES = 10
 
@@ -77,8 +84,11 @@ class VoiceActivityDetector:
         if len(self._noise_levels) < NOISE_MIN_SAMPLES:
             return MIN_THRESHOLD
         ordered = sorted(self._noise_levels)
-        floor = ordered[len(ordered) // 2]
-        return max(MIN_THRESHOLD, floor * self.noise_factor)
+        floor = ordered[min(len(ordered) - 1, int(len(ordered) * NOISE_PERCENTILE))]
+        threshold = max(MIN_THRESHOLD, floor * self.noise_factor)
+        # Never let the room set a bar higher than this: a calibration window
+        # that caught someone mid-sentence must not deafen the detector.
+        return min(threshold, MAX_THRESHOLD)
 
     def calibrate(self, levels: list[float]) -> None:
         """Seed the noise floor with a sample of background noise.
@@ -90,7 +100,8 @@ class VoiceActivityDetector:
         if self.threshold is not None or not levels:
             return
         ordered = sorted(levels[-NOISE_WINDOW:])
-        floor = min(ordered[len(ordered) // 10], MAX_CALIBRATION_FLOOR)
+        index = min(len(ordered) - 1, int(len(ordered) * NOISE_PERCENTILE))
+        floor = min(ordered[index], MAX_CALIBRATION_FLOOR)
         self._noise_levels = [floor] * len(ordered)
 
     def _remember_noise(self, level: float) -> None:

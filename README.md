@@ -162,12 +162,44 @@ puts everything under `~/.local/share/tesy/`:
 | `TESY_MAX_UTTERANCE_S`  | `20`                             | Safety cap on a single turn                  |
 | `TESY_VAD_THRESHOLD`    | adaptive                         | Fixed level instead of noise tracking        |
 | `TESY_STT_THREADS`      | `4`                              | Whisper threads                              |
-| `TESY_BARGE_IN`         | `on`                             | Talk over Tesy to cut her off                |
+| `TESY_BARGE_IN`         | `off`                            | Talk over Tesy to cut her off                |
 | `TESY_DEBUG_AUDIO`      | off                              | Directory to save each captured turn as WAV  |
 
-Tesy listens while she talks. Start speaking and she stops mid-sentence, keeps
-what you already said, and answers the new turn. Set `TESY_BARGE_IN=off` for a
-hands-free room where the microphone would otherwise pick up her own voice.
+With `TESY_BARGE_IN=on`, Tesy listens while she talks. Start speaking and she
+stops mid-sentence, keeps what you already said, and answers the new turn.
+
+Leave it on only while you listen on headphones. Through speakers the
+microphone also hears Tesy's own voice, which is louder than most speech on a
+nearby built-in microphone, so she cuts herself off the moment she starts.
+
+### Echo cancellation
+
+Tesy plays through, and listens on, PipeWire devices when they are set up,
+which keeps some of her own voice out of the microphone. Create the module once:
+
+```bash
+mkdir -p ~/.config/pipewire/pipewire.conf.d
+cat > ~/.config/pipewire/pipewire.conf.d/50-tesy-echo-cancel.conf <<'EOF'
+context.modules = [
+    { name = libpipewire-module-echo-cancel
+        args = {
+            node.name    = "tesy_mic"
+            library.name = aec/libspa-aec-webrtc
+            capture.props  = { node.name = "tesy_mic.capture"  target.object = "alsa_input.pci-0000_00_1f.3.analog-stereo" }
+            playback.props = { node.name = "tesy_mic.playback" target.object = "alsa_output.pci-0000_00_1f.3.analog-stereo" }
+            source.props   = { node.name = "tesy_mic" }
+        }
+    }
+]
+EOF
+systemctl --user restart pipewire pipewire-pulse
+```
+
+Change the two `target.object` names to this machine's own devices first
+(`pactl list sources short`, `pactl list sinks short`). Tesy then uses
+`tesy_mic` and `echo-cancel-sink` by itself. It is not enough to make
+level-based barge-in trustworthy on a built-in microphone, but it makes
+transcription cleaner and the noise-tracking far more reliable.
 
 ### Bluetooth headsets
 

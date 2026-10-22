@@ -34,7 +34,10 @@ class VoiceConfig:
     threshold: float | None
     high_pass_hz: float
     threads: int
-    barge_in: bool = True
+    # Off by default: with the voice coming out of the speakers next to the
+    # microphone, Tesy hears her own echo as an interruption. Turn it on when
+    # listening on headphones, where there is nothing to echo back.
+    barge_in: bool = False
 
     @property
     def whisper_binary(self) -> Path | None:
@@ -118,9 +121,21 @@ def _pactl(kind: str) -> list[str]:
     return [line.split("\t")[1] for line in result.stdout.splitlines() if "\t" in line]
 
 
+ECHO_CANCEL_SOURCE = "tesy_mic"
+ECHO_CANCEL_SINK = "echo-cancel-sink"
+
+
 def default_mic_source() -> str | None:
-    """The source to listen on when none was asked for."""
+    """The source to listen on when none was asked for.
+
+    An echo-cancelled source is preferred when it exists: Tesy talks through
+    the speaker while listening, and without cancellation she hears her own
+    voice and takes it for an interruption.
+    """
     sources = [name for name in list_sources() if ".monitor" not in name]
+    if ECHO_CANCEL_SOURCE in sources:
+        return ECHO_CANCEL_SOURCE
+
     cards = {card["name"]: card for card in _cards()}
 
     for source in sources:
@@ -146,8 +161,14 @@ def default_speaker() -> str | None:
     A Bluetooth headset that is being recorded from usually drops its output
     to the narrowband headset profile, which sounds bad. Playing through the
     laptop's own speaker avoids that entirely.
+
+    When the echo-cancelled source is in use, everything is played into the
+    echo-cancel sink instead, so the cancellation has a reference signal to
+    subtract and the audio still reaches the real speaker.
     """
     sinks = list_sinks()
+    if ECHO_CANCEL_SOURCE in list_sources() and ECHO_CANCEL_SINK in sinks:
+        return ECHO_CANCEL_SINK
     for sink in sinks:
         if sink.startswith("alsa_output"):
             return sink
@@ -290,5 +311,5 @@ def resolve_voice_config() -> VoiceConfig:
         threshold=_float_env("TESY_VAD_THRESHOLD", None),
         high_pass_hz=float(_float_env("TESY_HIGH_PASS_HZ", 100.0)),
         threads=_int_env("TESY_STT_THREADS", 4),
-        barge_in=_bool_env("TESY_BARGE_IN", True),
+        barge_in=_bool_env("TESY_BARGE_IN", False),
     )

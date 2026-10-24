@@ -316,3 +316,14 @@ python -m unittest discover -s tests
 Speech in and out is local and free. The next step is a fine-tuned model
 (see above) so Tesy sounds like itself rather than a general assistant, and a
 daily request counter for the 50-request free tier.
+
+## Contributing
+
+Bug reports and pull requests are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and style, and read
+[SECURITY.md](SECURITY.md) before reporting a vulnerability - please do not
+open a public issue for one.
+
+## Licence
+
+[MIT](LICENSE) © Captain Smasduq.

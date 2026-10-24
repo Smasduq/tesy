@@ -1,0 +1,77 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not include API keys, tokens, or
+        private file contents. For security issues, use SECURITY.md instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `python main.py ...`
+        2. ...
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran, with secrets removed.
+      placeholder: python main.py --provider local "hello"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste the traceback or error output. Remove keys and private paths.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - openrouter
+        - local (Ollama)
+        - snowflake
+        - not provider-related
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues before opening this one.
+          required: true
+        - label: I removed credentials and private data from this report.
+          required: true

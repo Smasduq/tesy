@@ -9,11 +9,12 @@ Python project, and most changes stay that way.
   we can agree on the shape of the change before you write it.
 - Keep pull requests focused. One change per PR is much easier to review and
   revert than five bundled together.
-- Be kind in issues and reviews. Disagreement is fine; rudeness is not.
+- Be kind in issues and reviews. Disagreement is fine; rudeness is not. The
+  [Code of Conduct](CODE_OF_CONDUCT.md) applies to every project space.
 
 ## Setting up
 
-Tesy needs Python 3.11 or newer. There are no third-party Python packages for
+Tesy needs Python 3.10 or newer. There are no third-party Python packages for
 the text path, so a virtual environment and an editable install are enough:
 
 ```bash
@@ -21,7 +22,11 @@ git clone https://github.com/Smasduq/tesy.git
 cd tesy
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install -e .
 ```
+
+That installs the dependencies declared in `pyproject.toml` and puts a `tesy`
+command on your path, equivalent to `python main.py`.
 
 Copy `.env.example` to `.env` and fill in the credentials for the provider you
 want to use. Never commit `.env` or any other file containing real keys.
@@ -48,7 +53,8 @@ python -m unittest discover -s tests
 
 Add a test for any behaviour you change. Tests should not call a real model
 provider, touch the network, or need a microphone; stub the provider and use
-temporary directories instead.
+temporary directories instead. CI runs the same suite on Python 3.10 through
+3.13 for every push to `main` and every pull request.
 
 If you touch the voice pipeline, also try it by hand. The tests cannot hear:
 
@@ -63,6 +69,7 @@ python scripts/stt_check.py
   functions, small modules, and standard-library solutions over frameworks.
 - Keep the public CLI documented in the README in sync with the flags you add
   or change in `tesy/cli.py`.
+- Add user-visible changes under `[Unreleased]` in `CHANGELOG.md`.
 - User-facing text is spoken aloud by default. Keep it short, natural, and free
   of formatting that sounds wrong when read out.
 - Prefer clear names and comments that explain *why*, not *what*.

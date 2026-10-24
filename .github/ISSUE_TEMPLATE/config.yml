@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Smasduq/tesy/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Question or help
+    url: https://github.com/Smasduq/tesy/blob/main/SUPPORT.md
+    about: Read the support guide before opening an issue.

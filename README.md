@@ -1,5 +1,9 @@
 # Tesy
 
+[![Tests](https://github.com/Smasduq/tesy/actions/workflows/tests.yml/badge.svg)](https://github.com/Smasduq/tesy/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 Your co-worker and friend. Never lets you get lonely.
 
 Tesy chats over a pluggable backend, so the model provider can be swapped
@@ -320,9 +324,13 @@ daily request counter for the 50-request free tier.
 ## Contributing
 
 Bug reports and pull requests are welcome. Start with
-[CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and style, and read
-[SECURITY.md](SECURITY.md) before reporting a vulnerability - please do not
-open a public issue for one.
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and style, read
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before joining the conversation, and
+read [SECURITY.md](SECURITY.md) before reporting a vulnerability - please do
+not open a public issue for one. For everything else, see
+[SUPPORT.md](SUPPORT.md).
+
+Notable changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 
